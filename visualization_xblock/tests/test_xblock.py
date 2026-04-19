@@ -1,4 +1,4 @@
-"""Tests for ShowMeXBlock."""
+"""Tests for VisualizationXBlock."""
 
 import json
 import unittest
@@ -8,26 +8,26 @@ from web_fragments.fragment import Fragment
 from xblock.fields import ScopeIds
 from xblock.test.toy_runtime import ToyRuntime
 
-from show_me import ShowMeXBlock
-from show_me import gemini_client
-from show_me.gemini_client import GeminiClientError, _extract_html, _extract_text
+from visualization import VisualizationXBlock
+from visualization import gemini_client
+from visualization.gemini_client import GeminiClientError, _extract_html, _extract_text
 
 
 SIMULATION_HTML = "<!DOCTYPE html><html><body><h1>sim</h1></body></html>"
 
 
-class ShowMeTestBase(unittest.TestCase):
+class VisualizationTestBase(unittest.TestCase):
     def setUp(self):
         self.runtime = ToyRuntime()
         self.scope_ids = ScopeIds(
             user_id="test_user",
-            block_type="show_me",
+            block_type="visualization",
             def_id="def_id",
             usage_id="usage_id",
         )
 
     def _make_block(self):
-        return ShowMeXBlock(self.runtime, scope_ids=self.scope_ids)
+        return VisualizationXBlock(self.runtime, scope_ids=self.scope_ids)
 
     def _call_handler(self, block, handler_name, data):
         request = MagicMock()
@@ -37,7 +37,7 @@ class ShowMeTestBase(unittest.TestCase):
         return json.loads(response.body)
 
 
-class TestShowMeHandlers(ShowMeTestBase):
+class TestVisualizationHandlers(VisualizationTestBase):
 
     def test_save_settings_updates_fields(self):
         block = self._make_block()
@@ -60,7 +60,7 @@ class TestShowMeHandlers(ShowMeTestBase):
         })
         self.assertEqual(resp["status"], "error")
 
-    @patch("show_me.xblock.gemini_client.generate_simulation")
+    @patch("visualization.xblock.gemini_client.generate_simulation")
     def test_generate_success_stores_html(self, mock_gen):
         mock_gen.return_value = SIMULATION_HTML
         block = self._make_block()
@@ -76,7 +76,7 @@ class TestShowMeHandlers(ShowMeTestBase):
         self.assertIsNotNone(block.generated_at)
         mock_gen.assert_called_once_with("Show a Moon-Earth orbit", "gemini-2.5-pro")
 
-    @patch("show_me.xblock.gemini_client.generate_simulation")
+    @patch("visualization.xblock.gemini_client.generate_simulation")
     def test_generate_error_sets_status(self, mock_gen):
         mock_gen.side_effect = GeminiClientError("API quota exceeded")
         block = self._make_block()
@@ -91,7 +91,7 @@ class TestShowMeHandlers(ShowMeTestBase):
         self.assertEqual(block.cached_html, "")
 
 
-class TestShowMeViews(ShowMeTestBase):
+class TestVisualizationViews(VisualizationTestBase):
 
     def test_student_view_without_html_shows_placeholder(self):
         block = self._make_block()
@@ -159,7 +159,7 @@ class TestGeminiClientHTTP(unittest.TestCase):
             resp.json.side_effect = ValueError("not json")
         return resp
 
-    @patch("show_me.gemini_client.requests.post")
+    @patch("visualization.gemini_client.requests.post")
     def test_generate_simulation_happy_path(self, mock_post):
         mock_post.return_value = self._make_response(
             status=200,
@@ -180,7 +180,7 @@ class TestGeminiClientHTTP(unittest.TestCase):
             gemini_client.SYSTEM_PROMPT,
         )
 
-    @patch("show_me.gemini_client.requests.post")
+    @patch("visualization.gemini_client.requests.post")
     def test_generate_simulation_http_error_raises(self, mock_post):
         mock_post.return_value = self._make_response(
             status=429, text="rate limited"

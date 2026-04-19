@@ -39,11 +39,8 @@ From inside the edx-platform virtualenv (e.g. a Tutor LMS shell):
 pip install -e /path/to/visualization-xblock/visualization_xblock
 ```
 
-Then add `show_me` to `ADVANCED_COMPONENT_TYPES` (site config or Django admin)
+Then add `visualization` to `ADVANCED_COMPONENT_TYPES` (site config or Django admin)
 so it shows up in Studio’s *Advanced Component* picker.
-
-> The XBlock tag is intentionally kept as `show_me` — renaming it would orphan
-> any blocks already authored in Studio.
 
 ## API key
 
@@ -77,8 +74,8 @@ visualization-xblock/
 └── visualization_xblock/          # pip-installable project root
     ├── setup.py                   # dist name: visualization-xblock
     ├── conftest.py
-    ├── show_me/                   # Python package (xblock tag: show_me)
-    │   ├── xblock.py              # ShowMeXBlock
+    ├── visualization/             # Python package (xblock tag: visualization)
+    │   ├── xblock.py              # VisualizationXBlock
     │   ├── gemini_client.py       # REST adapter over generateContent
     │   └── static/{html,css,js}/
     └── tests/

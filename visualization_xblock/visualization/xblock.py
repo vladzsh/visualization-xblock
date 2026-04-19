@@ -1,4 +1,4 @@
-"""ShowMeXBlock — Gemini-powered interactive simulation for Open edX."""
+"""VisualizationXBlock — Gemini-powered interactive simulation for Open edX."""
 
 import datetime
 import html
@@ -10,8 +10,8 @@ from web_fragments.fragment import Fragment
 from xblock.core import XBlock
 from xblock.fields import DateTime, Scope, String
 
-from show_me import gemini_client
-from show_me.gemini_client import GeminiClientError
+from visualization import gemini_client
+from visualization.gemini_client import GeminiClientError
 
 log = logging.getLogger(__name__)
 
@@ -26,12 +26,12 @@ MODEL_CHOICES = [
 ]
 
 
-class ShowMeXBlock(XBlock):
+class VisualizationXBlock(XBlock):
     """Render an LLM-generated interactive simulation in a sandboxed iframe."""
 
     display_name = String(
         display_name="Display Name",
-        default="Show Me Simulation",
+        default="Visualization",
         scope=Scope.settings,
         help="Component title shown to students.",
     )
@@ -106,7 +106,7 @@ class ShowMeXBlock(XBlock):
         try:
             rendered_html = gemini_client.generate_simulation(prompt, model_name)
         except GeminiClientError as exc:
-            log.warning("ShowMe Gemini generation failed: %s", exc)
+            log.warning("Gemini generation failed: %s", exc)
             self.generation_status = STATUS_ERROR
             self.last_error = str(exc)
             return {"status": "error", "message": str(exc)}
@@ -130,10 +130,10 @@ class ShowMeXBlock(XBlock):
         if has_html:
             srcdoc = html.escape(self.cached_html, quote=True)
             iframe_html = (
-                f'<iframe class="show-me-frame" sandbox="allow-scripts" '
+                f'<iframe class="visualization-frame" sandbox="allow-scripts" '
                 f'srcdoc="{srcdoc}" '
                 f'style="width:100%;height:600px;border:0" '
-                f'title="{html.escape(self.display_name or "Simulation", quote=True)}">'
+                f'title="{html.escape(self.display_name or "Visualization", quote=True)}">'
                 f"</iframe>"
             )
             placeholder_display = "none"
@@ -146,9 +146,9 @@ class ShowMeXBlock(XBlock):
             iframe_display=iframe_display,
         )
         frag = Fragment(rendered)
-        frag.add_css(self.resource_string("static/css/show_me.css"))
+        frag.add_css(self.resource_string("static/css/visualization.css"))
         frag.add_javascript(self.resource_string("static/js/src/student.js"))
-        frag.initialize_js("ShowMeXBlock")
+        frag.initialize_js("VisualizationXBlock")
         return frag
 
     def studio_view(self, context=None):
@@ -173,7 +173,7 @@ class ShowMeXBlock(XBlock):
             generated_at=generated_at_str,
         )
         frag = Fragment(rendered)
-        frag.add_css(self.resource_string("static/css/show_me.css"))
+        frag.add_css(self.resource_string("static/css/visualization.css"))
         frag.add_javascript(self.resource_string("static/js/src/studio.js"))
-        frag.initialize_js("ShowMeStudio")
+        frag.initialize_js("VisualizationStudio")
         return frag

@@ -20,15 +20,15 @@ setup(
     version="0.1.0",
     description="Open edX XBlock that generates interactive Gemini-powered simulations",
     license="AGPL v3",
-    packages=["show_me"],
+    packages=["visualization"],
     install_requires=[
         "XBlock",
         "requests",
     ],
     entry_points={
         "xblock.v1": [
-            "show_me = show_me:ShowMeXBlock",
+            "visualization = visualization:VisualizationXBlock",
         ]
     },
-    package_data=package_data("show_me", ["static"]),
+    package_data=package_data("visualization", ["static"]),
 )
