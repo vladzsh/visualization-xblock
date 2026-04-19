@@ -17,17 +17,22 @@ function VisualizationStudio(runtime, element) {
   var courseId = $root.data('course-id');
   var blockId = $root.data('block-id');
   var sequentialId = $root.data('sequential-id');
+  // Crafter's URL patterns are only registered on LMS. From the Studio iframe
+  // we talk to LMS cross-origin; JWT cookies are shared across the parent
+  // domain, so `withCredentials: true` authenticates us.
+  var lmsRoot = ($root.data('lms-root') || '').replace(/\/$/, '');
 
-  // Xblock handlers (save-only; generation goes straight to crafter).
+  // Xblock handlers (save-only; generation goes straight to crafter on LMS).
   var xblockUrls = {
     saveSettings: runtime.handlerUrl(element, 'save_settings'),
     saveApplied: runtime.handlerUrl(element, 'save_applied_html')
   };
 
-  // Crafter REST API (same origin as the studio_view iframe → session cookie works).
   var CRAFTER = {
-    generate: '/course_crafter_plugin/api/ai-content/generate/',
-    chat: function (id) { return '/course_crafter_plugin/api/chat/' + encodeURIComponent(id) + '/'; }
+    generate: lmsRoot + '/course_crafter_plugin/api/ai-content/generate/',
+    chat: function (id) {
+      return lmsRoot + '/course_crafter_plugin/api/chat/' + encodeURIComponent(id) + '/';
+    }
   };
 
   var messages = [];
