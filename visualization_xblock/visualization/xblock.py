@@ -1,10 +1,4 @@
-"""VisualizationXBlock — renders a Gemini-generated interactive simulation.
-
-Content generation and chat history are not implemented here: the Studio
-browser POSTs directly to ``course-crafter-plugin``'s REST API (same origin,
-same session cookie). This xblock only persists the resulting HTML and
-renders it in the student view inside a sandboxed iframe.
-"""
+"""VisualizationXBlock — Gemini-powered interactive simulation for Open edX."""
 
 import datetime
 import html
@@ -16,11 +10,24 @@ from web_fragments.fragment import Fragment
 from xblock.core import XBlock
 from xblock.fields import DateTime, Scope, String
 
+from visualization import gemini_client
+from visualization.gemini_client import GeminiClientError
+
 log = logging.getLogger(__name__)
+
+STATUS_IDLE = "idle"
+STATUS_GENERATING = "generating"
+STATUS_ERROR = "error"
+
+MODEL_CHOICES = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-3.1-pro",
+]
 
 
 class VisualizationXBlock(XBlock):
-    """AI-generated interactive simulation rendered in a sandboxed iframe."""
+    """Render an LLM-generated interactive simulation in a sandboxed iframe."""
 
     display_name = String(
         display_name="Display Name",
@@ -29,82 +36,91 @@ class VisualizationXBlock(XBlock):
         help="Component title shown to students.",
     )
     prompt = String(
-        display_name="Last applied prompt",
+        display_name="Simulation prompt",
         default="",
         scope=Scope.settings,
-        help="The prompt that produced the currently applied simulation (informational).",
+        help="What the simulation should show. Describe the phenomenon and controls.",
+    )
+    model_name = String(
+        display_name="Gemini model",
+        default="gemini-2.5-flash",
+        scope=Scope.settings,
+        values=MODEL_CHOICES,
+        help=(
+            "gemini-2.5-flash (free tier, default) for most 2D simulations; "
+            "gemini-2.5-pro requires billing; gemini-3.1-pro adds WebGL/3D."
+        ),
     )
     cached_html = String(
         default="",
         scope=Scope.settings,
-        help="Currently-applied simulation HTML (shared across students).",
+        help="Generated simulation HTML (shared across students of the block).",
     )
     generated_at = DateTime(
         default=None,
         scope=Scope.settings,
-        help="When ``cached_html`` was last updated.",
+        help="Timestamp of the last successful generation.",
+    )
+    generation_status = String(
+        default=STATUS_IDLE,
+        scope=Scope.settings,
+        help="One of: idle | generating | error.",
+    )
+    last_error = String(
+        default="",
+        scope=Scope.settings,
+        help="Last generation error message, surfaced in Studio.",
     )
 
     def resource_string(self, path):
         return files(__package__).joinpath(path).read_text(encoding="utf-8")
 
-    # ------------------------------------------------------------------
-    # Usage-key helpers (resolved server-side for the Studio template)
-    # ------------------------------------------------------------------
-    def _course_id(self):
-        try:
-            return str(self.scope_ids.usage_id.context_key)
-        except Exception:
-            return ""
-
-    def _block_id(self):
-        try:
-            return str(self.scope_ids.usage_id)
-        except Exception:
-            return ""
-
-    def _sequential_id(self):
-        """Walk the xblock tree up to the sequential container.
-
-        Our block lives inside a vertical, which lives inside a sequential.
-        Crafter's ``build_prompt`` needs the sequential id to fetch
-        ``sequential.display_name`` for the learning context.
-        """
-        try:
-            vertical = self.get_parent()
-            sequential = vertical.get_parent() if vertical is not None else None
-            if sequential is not None:
-                return str(sequential.scope_ids.usage_id)
-        except Exception:
-            pass
-        return ""
-
-    # ------------------------------------------------------------------
-    # Handlers
-    # ------------------------------------------------------------------
     @XBlock.json_handler
     def save_settings(self, data, suffix=""):
-        """Persist Studio-edited display name."""
+        """Persist Studio-edited fields without generating."""
         self.display_name = data.get("display_name", self.display_name)
+        self.prompt = data.get("prompt", self.prompt)
+
+        model_name = data.get("model_name", self.model_name)
+        if model_name not in MODEL_CHOICES:
+            return {"status": "error", "message": f"Unknown model: {model_name}"}
+        self.model_name = model_name
+
         return {"status": "ok"}
 
     @XBlock.json_handler
-    def save_applied_html(self, data, suffix=""):
-        """Promote a generated HTML payload (chosen in Studio) to the applied simulation."""
-        html_payload = data.get("html") or ""
-        if not html_payload:
-            return {"status": "error", "message": "No HTML to apply."}
-        self.cached_html = html_payload
-        self.prompt = data.get("prompt", self.prompt)
+    def generate(self, data, suffix=""):
+        """Call Gemini and cache the resulting HTML on the block."""
+        prompt = data.get("prompt", self.prompt)
+        model_name = data.get("model_name", self.model_name)
+
+        if model_name not in MODEL_CHOICES:
+            self.generation_status = STATUS_ERROR
+            self.last_error = f"Unknown model: {model_name}"
+            return {"status": "error", "message": self.last_error}
+
+        self.prompt = prompt
+        self.model_name = model_name
+        self.generation_status = STATUS_GENERATING
+
+        try:
+            rendered_html = gemini_client.generate_simulation(prompt, model_name)
+        except GeminiClientError as exc:
+            log.warning("Gemini generation failed: %s", exc)
+            self.generation_status = STATUS_ERROR
+            self.last_error = str(exc)
+            return {"status": "error", "message": str(exc)}
+
+        self.cached_html = rendered_html
         self.generated_at = datetime.datetime.now(datetime.timezone.utc)
+        self.generation_status = STATUS_IDLE
+        self.last_error = ""
         return {
             "status": "ok",
+            "html": rendered_html,
             "generated_at": self.generated_at.isoformat(),
         }
 
-    # ------------------------------------------------------------------
-    # Views
-    # ------------------------------------------------------------------
     def student_view(self, context=None):
         template = self.resource_string("static/html/student.html")
         has_html = bool(self.cached_html)
@@ -137,20 +153,24 @@ class VisualizationXBlock(XBlock):
 
     def studio_view(self, context=None):
         template = self.resource_string("static/html/studio.html")
-        preview_srcdoc = (
-            html.escape(self.cached_html, quote=True) if self.cached_html else ""
-        )
+        preview_srcdoc = html.escape(self.cached_html, quote=True) if self.cached_html else ""
         generated_at_str = self.generated_at.isoformat() if self.generated_at else ""
+
+        model_options = "".join(
+            f'<option value="{m}"{" selected" if m == self.model_name else ""}>{m}</option>'
+            for m in MODEL_CHOICES
+        )
 
         rendered = template.format(
             display_name=html.escape(self.display_name or "", quote=True),
+            prompt=html.escape(self.prompt or ""),
+            model_options=model_options,
             preview_srcdoc=preview_srcdoc,
             preview_display="block" if preview_srcdoc else "none",
+            status=self.generation_status,
+            last_error=html.escape(self.last_error or ""),
+            error_display="block" if self.last_error else "none",
             generated_at=generated_at_str,
-            applied_prompt=html.escape(self.prompt or ""),
-            course_id=html.escape(self._course_id(), quote=True),
-            block_id=html.escape(self._block_id(), quote=True),
-            sequential_id=html.escape(self._sequential_id(), quote=True),
         )
         frag = Fragment(rendered)
         frag.add_css(self.resource_string("static/css/visualization.css"))

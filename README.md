@@ -1,71 +1,58 @@
 # visualization-xblock
 
 An Open edX XBlock that generates interactive educational simulations on demand
-via [course-crafter-plugin][crafter] (Gemini provider). Course authors chat with
-the AI directly in Studio (“Show a Moon orbiting Earth with sliders for
-velocity and gravity”), review the generated HTML, and apply it to the block —
-students see it rendered inside a sandboxed iframe.
+via the Google Gemini API. Course authors write a natural-language prompt in
+Studio (“Show a Moon orbiting Earth with sliders for velocity and gravity”),
+Gemini returns a single self-contained HTML page, and students see it rendered
+inside a sandboxed iframe.
 
 Tested against the Open edX **Teak** release.
 
-[crafter]: https://gitlab.raccoongang.com/AILab/course-crafter-ai/course-crafter-plugin
-
 ## Status
 
-Proof of concept. Expect rough edges.
+Proof of concept. Expect rough edges. See `docs/POC.md` in the project wiki
+for the background and open questions.
 
 ## What it does
 
-- **Studio:** an "AI Content Assistant" chat panel (mirrors the crafter widget
-  UX), a list of past messages per author × block, `Apply` to promote any AI
-  message to the active simulation, and a live preview pane.
-- **LMS (student view):** renders the applied simulation inside
+- **Studio:** textarea for the prompt, dropdown for the Gemini model, a
+  *Generate* button, and a preview pane.
+- **LMS (student view):** renders the cached simulation inside
   `<iframe sandbox="allow-scripts">`. One shared simulation per block.
-- **Backend:** the Studio browser POSTs directly to `course-crafter-plugin`'s
-  REST API (`/course_crafter_plugin/api/ai-content/generate/` and
-  `/course_crafter_plugin/api/chat/{block_id}/`). Same origin as the xblock
-  iframe so the session cookie authenticates the request. This xblock only
-  persists the author-applied HTML via its own `save_applied_html` handler
-  and renders it in the student view.
-- **Upstream:** we contribute the `visualization` content type and the Gemini
-  provider to `course-crafter-plugin` (see companion MR on the crafter repo).
+- **Backend:** thin wrapper around Gemini’s REST
+  `generateContent` endpoint. No `google-generativeai` SDK, so no protobuf
+  / grpcio conflicts with the edX Python environment.
 
 ## Supported models
 
-Any model supported by Google Generative Language API (picked via the crafter
-`Assistant` record). For POC we default to `gemini-2.5-flash` — free tier,
-fast, sufficient for 2D simulations. `gemini-2.5-pro` and `gemini-3.1-pro`
-require billing to be enabled on the API key; pro models are needed for WebGL
-/ 3D content.
+| Model             | Notes                                               |
+|-------------------|-----------------------------------------------------|
+| `gemini-2.5-flash`| Free tier. Default. Good enough for most 2D sims.   |
+| `gemini-2.5-pro`  | Higher quality. **Requires billing** on the key.    |
+| `gemini-3.1-pro`  | WebGL / 3D support. Requires billing.               |
 
 ## Install
 
 From inside the edx-platform virtualenv (e.g. a Tutor LMS shell):
 
 ```bash
-pip install -e /path/to/course-crafter-plugin        # feat/visualization-gemini branch
 pip install -e /path/to/visualization-xblock/visualization_xblock
 ```
 
-Then, in site config or Django admin, add `visualization` to
-`ADVANCED_COMPONENT_TYPES` so it shows up in Studio’s *Advanced Component*
-picker.
+Then add `visualization` to `ADVANCED_COMPONENT_TYPES` (site config or Django admin)
+so it shows up in Studio’s *Advanced Component* picker.
 
-## API key & per-course assistant
+## API key
 
-The Gemini key lives in the crafter `APICredentials` table, not in env vars.
-One-time setup (Django admin on LMS → *Course Crafter Plugin*):
+The XBlock reads the Gemini API key from, in order of preference:
 
-1. **APICredentials:** name `gemini-main`, provider `gemini`, `api_key` = your
-   Google AI Studio key.
-2. **Assistant:** pick the credentials, `model_name=gemini-2.5-flash`, leave
-   `system_input` / `json_format` blank (the crafter prompt service supplies
-   them), set `temperature` ≈ `0.7`.
-3. **AI Content creation Assistant:** `course_id=<your course key>`,
-   `assistant=<the Assistant above>`.
+1. `django.conf.settings.GEMINI_API_KEY`
+2. `os.environ["GEMINI_API_KEY"]`
 
-Once this is in place, every VisualizationXBlock instance in that course picks
-up the assistant automatically.
+For Tutor dev, the quickest option is to set the env var on the LMS and CMS
+containers via a `docker-compose.override.yml` in the Tutor env. A proper
+Tutor plugin that pipes the value through the settings chain is left as an
+exercise (and is the recommended path for any non-POC deployment).
 
 ## Development
 
@@ -76,8 +63,7 @@ pip install -e . pytest django
 pytest tests/ -v
 ```
 
-The test suite mocks the crafter client end-to-end — no crafter install, no
-network, no API key required.
+All 15 tests mock the Gemini HTTP call, so no API key is required to run them.
 
 ## Layout
 
@@ -89,22 +75,11 @@ visualization-xblock/
     ├── setup.py                   # dist name: visualization-xblock
     ├── conftest.py
     ├── visualization/             # Python package (xblock tag: visualization)
-    │   ├── xblock.py              # VisualizationXBlock (save_settings + save_applied_html)
-    │   └── static/{html,css,js}/  # Studio chat UI POSTs directly to crafter REST
+    │   ├── xblock.py              # VisualizationXBlock
+    │   ├── gemini_client.py       # REST adapter over generateContent
+    │   └── static/{html,css,js}/
     └── tests/
 ```
-
-## Future work
-
-- Reuse the `AIAssistantWidget` from `frontend-ai-crafter-widgets` directly.
-  Blocked today because that widget is embedded in Course Authoring’s
-  Problem/HTML editor modals, and Advanced Components render in an iframe that
-  lives outside the widget’s DOM. Likely paths: add a dedicated Course
-  Authoring editor for `visualization` blockType that reuses the widget, or
-  wire a `postMessage` bridge into the iframe.
-- Admin UX to configure per-course `AIContentCreator` without diving into
-  Django admin.
-- Streaming generation output rather than a single final HTML blob.
 
 ## License
 
