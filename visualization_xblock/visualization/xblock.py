@@ -135,13 +135,6 @@ class VisualizationXBlock(XBlock):
         frag.initialize_js("VisualizationXBlock")
         return frag
 
-    def _lms_root_url(self):
-        try:
-            from django.conf import settings
-            return (getattr(settings, "LMS_ROOT_URL", "") or "").rstrip("/")
-        except Exception:
-            return ""
-
     def studio_view(self, context=None):
         template = self.resource_string("static/html/studio.html")
         preview_srcdoc = (
@@ -158,7 +151,6 @@ class VisualizationXBlock(XBlock):
             course_id=html.escape(self._course_id(), quote=True),
             block_id=html.escape(self._block_id(), quote=True),
             sequential_id=html.escape(self._sequential_id(), quote=True),
-            lms_root_url=html.escape(self._lms_root_url(), quote=True),
         )
         frag = Fragment(rendered)
         frag.add_css(self.resource_string("static/css/visualization.css"))

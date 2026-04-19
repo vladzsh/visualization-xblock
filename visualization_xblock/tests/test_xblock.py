@@ -30,7 +30,6 @@ class VisualizationTestBase(unittest.TestCase):
         block._course_id = lambda: "course-v1:edx+1+1"
         block._block_id = lambda: "block-v1:edx+1+1+type@visualization+block@abc"
         block._sequential_id = lambda: "block-v1:edx+1+1+type@sequential+block@seq"
-        block._lms_root_url = lambda: "http://local.openedx.io:8000"
         return block
 
     def _call_handler(self, block, handler_name, data):
@@ -93,7 +92,6 @@ class TestViews(VisualizationTestBase):
         self.assertIn("visualization-send", frag.content)
         self.assertIn('data-course-id="course-v1:edx+1+1"', frag.content)
         self.assertIn("data-sequential-id=\"block-v1:edx+1+1+type@sequential+block@seq\"", frag.content)
-        self.assertIn('data-lms-root="http://local.openedx.io:8000"', frag.content)
 
 
 if __name__ == "__main__":
