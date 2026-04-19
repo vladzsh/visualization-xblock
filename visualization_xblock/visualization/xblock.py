@@ -84,14 +84,37 @@ class VisualizationXBlock(XBlock):
             return ""
 
     def _current_user(self):
-        """Resolve the real Django user for the request, falling back to None."""
+        """Resolve the real Django user for the request, or ``None``.
+
+        Tries, in order:
+        1. ``crum.get_current_user()`` — request-scoped middleware, works in
+           both LMS and CMS/Studio.
+        2. The xblock ``user`` runtime service (LMS student contexts). We look
+           up the Django ``User`` by id because the service only exposes an
+           ``XBlockUser`` wrapper, not the ORM instance crafter's chat models
+           expect.
+        """
+        try:
+            from crum import get_current_user
+            user = get_current_user()
+            if user is not None and getattr(user, "is_authenticated", False):
+                return user
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
         try:
             user_service = self.runtime.service(self, "user")
             current = user_service.get_current_user()
             opt_attrs = getattr(current, "opt_attrs", {}) or {}
-            return opt_attrs.get("edx-platform.user")
+            user_id = opt_attrs.get("edx-platform.user_id")
+            if user_id:
+                from django.contrib.auth import get_user_model
+                return get_user_model().objects.filter(pk=user_id).first()
         except Exception:
-            return None
+            pass
+        return None
 
     # ------------------------------------------------------------------
     # Handlers
