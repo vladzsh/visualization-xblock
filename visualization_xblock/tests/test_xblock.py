@@ -1,4 +1,4 @@
-"""Tests for VisualizationXBlock."""
+"""Tests for VisualizationXBlock (crafter-backed)."""
 
 import json
 import unittest
@@ -9,11 +9,18 @@ from xblock.fields import ScopeIds
 from xblock.test.toy_runtime import ToyRuntime
 
 from visualization import VisualizationXBlock
-from visualization import gemini_client
-from visualization.gemini_client import GeminiClientError, _extract_html, _extract_text
+from visualization.crafter_client import (
+    CrafterError,
+    CrafterNotConfiguredError,
+    CrafterNotInstalledError,
+)
 
 
 SIMULATION_HTML = "<!DOCTYPE html><html><body><h1>sim</h1></body></html>"
+
+
+FAKE_COURSE_ID = "course-v1:edx+1+1"
+FAKE_BLOCK_ID = "block-v1:edx+1+1+type@visualization+block@abc"
 
 
 class VisualizationTestBase(unittest.TestCase):
@@ -25,9 +32,15 @@ class VisualizationTestBase(unittest.TestCase):
             def_id="def_id",
             usage_id="usage_id",
         )
+        self.mock_user = MagicMock(name="django_user")
 
     def _make_block(self):
-        return VisualizationXBlock(self.runtime, scope_ids=self.scope_ids)
+        block = VisualizationXBlock(self.runtime, scope_ids=self.scope_ids)
+        # ToyRuntime doesn't supply real usage keys / user services; stub ours.
+        block._current_user = lambda: self.mock_user
+        block._course_id = lambda: FAKE_COURSE_ID
+        block._block_id = lambda: FAKE_BLOCK_ID
+        return block
 
     def _call_handler(self, block, handler_name, data):
         request = MagicMock()
@@ -37,62 +50,105 @@ class VisualizationTestBase(unittest.TestCase):
         return json.loads(response.body)
 
 
-class TestVisualizationHandlers(VisualizationTestBase):
-
-    def test_save_settings_updates_fields(self):
+class TestSaveSettings(VisualizationTestBase):
+    def test_save_settings_updates_display_name(self):
         block = self._make_block()
-        resp = self._call_handler(block, "save_settings", {
-            "display_name": "Orbit demo",
-            "prompt": "Show a Moon-Earth orbit",
-            "model_name": "gemini-3.1-pro",
-        })
+        resp = self._call_handler(block, "save_settings", {"display_name": "Orbits"})
         self.assertEqual(resp["status"], "ok")
-        self.assertEqual(block.display_name, "Orbit demo")
-        self.assertEqual(block.prompt, "Show a Moon-Earth orbit")
-        self.assertEqual(block.model_name, "gemini-3.1-pro")
+        self.assertEqual(block.display_name, "Orbits")
 
-    def test_save_settings_rejects_unknown_model(self):
-        block = self._make_block()
-        resp = self._call_handler(block, "save_settings", {
-            "display_name": "x",
-            "prompt": "x",
-            "model_name": "gpt-5",
-        })
-        self.assertEqual(resp["status"], "error")
 
-    @patch("visualization.xblock.gemini_client.generate_simulation")
-    def test_generate_success_stores_html(self, mock_gen):
+class TestSendMessage(VisualizationTestBase):
+    @patch("visualization.xblock.crafter_client.generate_visualization_html")
+    def test_send_message_happy_path(self, mock_gen):
         mock_gen.return_value = SIMULATION_HTML
         block = self._make_block()
-        resp = self._call_handler(block, "generate", {
-            "prompt": "Show a Moon-Earth orbit",
-            "model_name": "gemini-2.5-pro",
-        })
+        resp = self._call_handler(block, "send_message", {"prompt": "Orbit sim"})
         self.assertEqual(resp["status"], "ok")
         self.assertEqual(resp["html"], SIMULATION_HTML)
-        self.assertEqual(block.cached_html, SIMULATION_HTML)
         self.assertEqual(block.generation_status, "idle")
-        self.assertEqual(block.last_error, "")
-        self.assertIsNotNone(block.generated_at)
-        mock_gen.assert_called_once_with("Show a Moon-Earth orbit", "gemini-2.5-pro")
-
-    @patch("visualization.xblock.gemini_client.generate_simulation")
-    def test_generate_error_sets_status(self, mock_gen):
-        mock_gen.side_effect = GeminiClientError("API quota exceeded")
-        block = self._make_block()
-        resp = self._call_handler(block, "generate", {
-            "prompt": "anything",
-            "model_name": "gemini-2.5-pro",
-        })
-        self.assertEqual(resp["status"], "error")
-        self.assertEqual(resp["message"], "API quota exceeded")
-        self.assertEqual(block.generation_status, "error")
-        self.assertEqual(block.last_error, "API quota exceeded")
+        # send_message does NOT auto-apply
         self.assertEqual(block.cached_html, "")
+        mock_gen.assert_called_once_with(
+            course_id=FAKE_COURSE_ID,
+            block_id=FAKE_BLOCK_ID,
+            prompt="Orbit sim",
+            user=self.mock_user,
+            current_content="",
+        )
+
+    def test_send_message_rejects_empty_prompt(self):
+        block = self._make_block()
+        resp = self._call_handler(block, "send_message", {"prompt": "   "})
+        self.assertEqual(resp["status"], "error")
+
+    @patch("visualization.xblock.crafter_client.generate_visualization_html")
+    def test_send_message_reports_not_configured(self, mock_gen):
+        mock_gen.side_effect = CrafterNotConfiguredError("no creator for course")
+        block = self._make_block()
+        resp = self._call_handler(block, "send_message", {"prompt": "x"})
+        self.assertEqual(resp["status"], "error")
+        self.assertEqual(resp["code"], "crafter_not_configured")
+        self.assertEqual(block.generation_status, "error")
+        self.assertIn("no creator", block.last_error)
+
+    @patch("visualization.xblock.crafter_client.generate_visualization_html")
+    def test_send_message_reports_not_installed(self, mock_gen):
+        mock_gen.side_effect = CrafterNotInstalledError("crafter missing")
+        block = self._make_block()
+        resp = self._call_handler(block, "send_message", {"prompt": "x"})
+        self.assertEqual(resp["code"], "crafter_not_installed")
+
+    @patch("visualization.xblock.crafter_client.generate_visualization_html")
+    def test_send_message_reports_generic_error(self, mock_gen):
+        mock_gen.side_effect = ValueError("API timeout")
+        block = self._make_block()
+        resp = self._call_handler(block, "send_message", {"prompt": "x"})
+        self.assertEqual(resp["status"], "error")
+        self.assertEqual(resp["message"], "API timeout")
+        self.assertEqual(block.generation_status, "error")
 
 
-class TestVisualizationViews(VisualizationTestBase):
+class TestApplyMessage(VisualizationTestBase):
+    def test_apply_message_updates_cached_html(self):
+        block = self._make_block()
+        resp = self._call_handler(block, "apply_message", {
+            "html": SIMULATION_HTML,
+            "prompt": "Orbit sim",
+        })
+        self.assertEqual(resp["status"], "ok")
+        self.assertEqual(block.cached_html, SIMULATION_HTML)
+        self.assertEqual(block.prompt, "Orbit sim")
+        self.assertIsNotNone(block.generated_at)
 
+    def test_apply_message_rejects_empty_payload(self):
+        block = self._make_block()
+        resp = self._call_handler(block, "apply_message", {"html": ""})
+        self.assertEqual(resp["status"], "error")
+
+
+class TestChatHistory(VisualizationTestBase):
+    @patch("visualization.xblock.crafter_client.get_chat_messages")
+    def test_get_chat_history_returns_messages(self, mock_get):
+        mock_get.return_value = [
+            {"role": "user", "content": "hi", "created_at": "2026-01-01T00:00:00+00:00"},
+        ]
+        block = self._make_block()
+        resp = self._call_handler(block, "get_chat_history", {})
+        self.assertEqual(resp["status"], "ok")
+        self.assertEqual(len(resp["messages"]), 1)
+        mock_get.assert_called_once_with(FAKE_BLOCK_ID, self.mock_user)
+
+    @patch("visualization.xblock.crafter_client.clear_chat")
+    def test_clear_chat_history(self, mock_clear):
+        mock_clear.return_value = 3
+        block = self._make_block()
+        resp = self._call_handler(block, "clear_chat_history", {})
+        self.assertEqual(resp["status"], "ok")
+        self.assertEqual(resp["deleted"], 3)
+
+
+class TestViews(VisualizationTestBase):
     def test_student_view_without_html_shows_placeholder(self):
         block = self._make_block()
         frag = block.student_view()
@@ -104,94 +160,17 @@ class TestVisualizationViews(VisualizationTestBase):
         block = self._make_block()
         block.cached_html = SIMULATION_HTML
         frag = block.student_view()
-        self.assertIsInstance(frag, Fragment)
         self.assertIn('sandbox="allow-scripts"', frag.content)
         self.assertIn("srcdoc=", frag.content)
-        # Raw HTML must be escaped — check it doesn't appear verbatim.
-        self.assertNotIn(SIMULATION_HTML, frag.content)
+        self.assertNotIn(SIMULATION_HTML, frag.content)  # escaped
 
-    def test_studio_view_renders_form_and_model_options(self):
+    def test_studio_view_has_chat_scaffolding(self):
         block = self._make_block()
-        block.prompt = "Fourier series"
         frag = block.studio_view()
-        self.assertIsInstance(frag, Fragment)
-        self.assertIn("Fourier series", frag.content)
-        self.assertIn("gemini-2.5-pro", frag.content)
-        self.assertIn("gemini-3.1-pro", frag.content)
-
-
-class TestGeminiClientParser(unittest.TestCase):
-
-    def test_extracts_from_fenced_block(self):
-        raw = "Sure!\n```html\n<!DOCTYPE html><h1>ok</h1>\n```\nDone."
-        self.assertEqual(_extract_html(raw), "<!DOCTYPE html><h1>ok</h1>")
-
-    def test_fallback_to_doctype_when_no_fences(self):
-        raw = "Here you go: <!DOCTYPE html><html><body>x</body></html>"
-        self.assertEqual(_extract_html(raw), "<!DOCTYPE html><html><body>x</body></html>")
-
-    def test_raises_when_no_html_found(self):
-        with self.assertRaises(GeminiClientError):
-            _extract_html("I cannot help with that.")
-
-    def test_extract_text_joins_parts(self):
-        payload = {
-            "candidates": [
-                {"content": {"parts": [{"text": "hel"}, {"text": "lo"}]}}
-            ]
-        }
-        self.assertEqual(_extract_text(payload), "hello")
-
-    def test_extract_text_raises_when_no_candidates(self):
-        with self.assertRaises(GeminiClientError):
-            _extract_text({"candidates": []})
-
-
-class TestGeminiClientHTTP(unittest.TestCase):
-
-    def _make_response(self, status=200, json_body=None, text=""):
-        resp = MagicMock()
-        resp.status_code = status
-        resp.text = text
-        if json_body is not None:
-            resp.json.return_value = json_body
-        else:
-            resp.json.side_effect = ValueError("not json")
-        return resp
-
-    @patch("visualization.gemini_client.requests.post")
-    def test_generate_simulation_happy_path(self, mock_post):
-        mock_post.return_value = self._make_response(
-            status=200,
-            json_body={
-                "candidates": [{
-                    "content": {"parts": [{"text": "```html\n<!DOCTYPE html><h1>x</h1>\n```"}]}
-                }]
-            },
-        )
-        result = gemini_client.generate_simulation("demo", "gemini-2.5-pro")
-        self.assertEqual(result, "<!DOCTYPE html><h1>x</h1>")
-
-        args, kwargs = mock_post.call_args
-        self.assertIn("gemini-2.5-pro:generateContent", args[0])
-        self.assertEqual(kwargs["params"], {"key": "test-key"})
-        self.assertEqual(
-            kwargs["json"]["system_instruction"]["parts"][0]["text"],
-            gemini_client.SYSTEM_PROMPT,
-        )
-
-    @patch("visualization.gemini_client.requests.post")
-    def test_generate_simulation_http_error_raises(self, mock_post):
-        mock_post.return_value = self._make_response(
-            status=429, text="rate limited"
-        )
-        with self.assertRaises(GeminiClientError) as cm:
-            gemini_client.generate_simulation("demo", "gemini-2.5-pro")
-        self.assertIn("429", str(cm.exception))
-
-    def test_generate_simulation_empty_prompt_raises(self):
-        with self.assertRaises(GeminiClientError):
-            gemini_client.generate_simulation("   ", "gemini-2.5-pro")
+        self.assertIn("AI Content Assistant", frag.content)
+        self.assertIn("visualization-messages", frag.content)
+        self.assertIn("visualization-clear-history", frag.content)
+        self.assertIn("visualization-send", frag.content)
 
 
 if __name__ == "__main__":

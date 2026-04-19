@@ -1,40 +1,50 @@
-<div class="visualization-studio">
-  <h3>Visualization — Interactive Simulation</h3>
-
+<div class="visualization-studio"
+     data-initial-status="{status}"
+     data-initial-generated-at="{generated_at}"
+     data-applied-prompt="{applied_prompt}">
   <div class="visualization-field">
     <label for="visualization-display-name">Display name</label>
     <input id="visualization-display-name" type="text" value="{display_name}" />
   </div>
 
-  <div class="visualization-field">
-    <label for="visualization-prompt">Simulation prompt</label>
-    <textarea id="visualization-prompt" rows="8" placeholder="Create an interactive simulation of ...">{prompt}</textarea>
-  </div>
+  <section class="visualization-assistant" aria-label="AI Content Assistant">
+    <header class="visualization-assistant-header">
+      <h3>AI Content Assistant</h3>
+      <div class="visualization-assistant-meta">
+        <span class="visualization-message-count" aria-live="polite">0 message(s)</span>
+        <button type="button" class="visualization-clear-history">Clear History</button>
+      </div>
+    </header>
 
-  <div class="visualization-field">
-    <label for="visualization-model">Gemini model</label>
-    <select id="visualization-model">
-      {model_options}
-    </select>
-    <p class="visualization-hint">gemini-2.5-flash — free tier. gemini-2.5-pro — requires billing. gemini-3.1-pro — WebGL/3D.</p>
-  </div>
+    <div class="visualization-messages" role="log" aria-live="polite"></div>
 
-  <div class="visualization-actions">
-    <button type="button" class="visualization-save">Save</button>
-    <button type="button" class="visualization-generate">Generate simulation</button>
-    <span class="visualization-status" data-status="{status}">Status: {status}</span>
-  </div>
+    <form class="visualization-compose" aria-label="Send message">
+      <textarea class="visualization-prompt"
+                rows="3"
+                placeholder="Describe the simulation you want…"></textarea>
+      <button type="submit" class="visualization-send">Send</button>
+    </form>
+    <p class="visualization-hint">Press Enter to send, Shift+Enter for a new line.</p>
+  </section>
 
-  <div class="visualization-error" style="display:{error_display}">
+  <div class="visualization-error" role="alert" style="display:{error_display}">
     <strong>Last error:</strong> <span class="visualization-error-msg">{last_error}</span>
   </div>
 
   <div class="visualization-preview-wrap" style="display:{preview_display}">
-    <h4>Preview <small class="visualization-generated-at">{generated_at}</small></h4>
+    <div class="visualization-preview-header">
+      <h4>Applied simulation</h4>
+      <small class="visualization-generated-at">{generated_at}</small>
+    </div>
     <iframe class="visualization-preview"
             sandbox="allow-scripts"
             srcdoc="{preview_srcdoc}"
             style="width:100%;height:600px;border:1px solid #ccc"
-            title="Simulation preview"></iframe>
+            title="Applied simulation"></iframe>
+  </div>
+
+  <div class="visualization-actions">
+    <button type="button" class="visualization-save">Save settings</button>
+    <span class="visualization-status" data-status="{status}">Status: {status}</span>
   </div>
 </div>
