@@ -22,6 +22,16 @@ REQUIREMENTS:
 6. Label all controls clearly.
 7. Use semantic HTML (<main>, <section>, <label>).
 8. Ensure output is safe to render inside a sandboxed iframe (no top-level navigation, no localStorage without fallback).
+9. Reset browser default margin: start <style> with `html,body{margin:0;padding:0}`.
+10. Report your own size so the host iframe can auto-resize. Add this at the very end of your <script>:
+
+    function __vizReport() {
+      var h = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+      parent.postMessage({type: 'visualization-resize', height: h}, '*');
+    }
+    window.addEventListener('load', __vizReport);
+    window.addEventListener('resize', __vizReport);
+    new ResizeObserver(__vizReport).observe(document.body);
 
 OUTPUT FORMAT:
 Return ONLY the HTML file content inside a ```html fenced block. No additional prose.

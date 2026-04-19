@@ -132,7 +132,7 @@ class VisualizationXBlock(XBlock):
             iframe_html = (
                 f'<iframe class="visualization-frame" sandbox="allow-scripts" '
                 f'srcdoc="{srcdoc}" '
-                f'style="width:100%;height:600px;border:0" '
+                f'style="width:100%;min-height:600px;border:0;display:block" '
                 f'title="{html.escape(self.display_name or "Visualization", quote=True)}">'
                 f"</iframe>"
             )

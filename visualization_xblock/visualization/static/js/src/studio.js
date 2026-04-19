@@ -3,6 +3,17 @@ function VisualizationStudio(runtime, element) {
   var saveUrl = runtime.handlerUrl(element, 'save_settings');
   var generateUrl = runtime.handlerUrl(element, 'generate');
 
+  // Resize the preview iframe to fit its content — messages come from the
+  // generated HTML's inline script (see SYSTEM_PROMPT in gemini_client.py).
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (!data || data.type !== 'visualization-resize') return;
+    var previewIframe = element.querySelector('.visualization-preview');
+    if (!previewIframe || event.source !== previewIframe.contentWindow) return;
+    var h = parseInt(data.height, 10);
+    if (h > 0) previewIframe.style.height = h + 'px';
+  });
+
   function collect() {
     return {
       display_name: $el.find('.visualization-studio #visualization-display-name').val(),

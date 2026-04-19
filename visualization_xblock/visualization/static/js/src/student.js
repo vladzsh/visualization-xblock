@@ -1,4 +1,12 @@
 function VisualizationXBlock(runtime, element) {
-  // Student view is static — no handlers wired up.
-  // Hook kept for initialize_js symmetry with the Studio view.
+  var iframe = element.querySelector('.visualization-frame');
+  if (!iframe) return;
+
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (!data || data.type !== 'visualization-resize') return;
+    if (event.source !== iframe.contentWindow) return;
+    var h = parseInt(data.height, 10);
+    if (h > 0) iframe.style.height = h + 'px';
+  });
 }
