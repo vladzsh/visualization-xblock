@@ -14,34 +14,44 @@ function VisualizationStudio(runtime, element) {
   var $preview = $root.find('.visualization-preview');
   var $previewAt = $root.find('.visualization-generated-at');
 
-  var urls = {
+  var courseId = $root.data('course-id');
+  var blockId = $root.data('block-id');
+  var sequentialId = $root.data('sequential-id');
+
+  // Xblock handlers (save-only; generation goes straight to crafter).
+  var xblockUrls = {
     saveSettings: runtime.handlerUrl(element, 'save_settings'),
-    sendMessage: runtime.handlerUrl(element, 'send_message'),
-    applyMessage: runtime.handlerUrl(element, 'apply_message'),
-    history: runtime.handlerUrl(element, 'get_chat_history'),
-    clear: runtime.handlerUrl(element, 'clear_chat_history')
+    saveApplied: runtime.handlerUrl(element, 'save_applied_html')
   };
 
-  // Messages rendered live; each "AI" message can be applied (overwrites preview).
+  // Crafter REST API (same origin as the studio_view iframe → session cookie works).
+  var CRAFTER = {
+    generate: '/course_crafter_plugin/api/ai-content/generate/',
+    chat: function (id) { return '/course_crafter_plugin/api/chat/' + encodeURIComponent(id) + '/'; }
+  };
+
   var messages = [];
 
-  function setStatus(status) {
-    $statusEl.attr('data-status', status).text('Status: ' + status);
-  }
+  function setStatus(s) { $statusEl.attr('data-status', s).text('Status: ' + s); }
 
   function showError(msg) {
-    if (msg) {
-      $errorWrap.show();
-      $errorMsg.text(msg);
-    } else {
-      $errorWrap.hide();
-      $errorMsg.text('');
-    }
+    if (msg) { $errorWrap.show(); $errorMsg.text(msg); }
+    else { $errorWrap.hide(); $errorMsg.text(''); }
   }
 
-  function escapeHtml(text) {
-    return String(text || '').replace(/[&<>"']/g, function (ch) {
-      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch];
+  function getCookie(name) {
+    var match = document.cookie.match(new RegExp('(^|; )' + name + '=([^;]*)'));
+    return match ? decodeURIComponent(match[2]) : '';
+  }
+
+  function crafterAjax(method, url, body) {
+    return $.ajax({
+      url: url,
+      type: method,
+      contentType: 'application/json',
+      data: body ? JSON.stringify(body) : undefined,
+      xhrFields: {withCredentials: true},
+      headers: {'X-CSRFToken': getCookie('csrftoken')}
     });
   }
 
@@ -50,20 +60,15 @@ function VisualizationStudio(runtime, element) {
     $messages.empty();
     messages.forEach(function (msg, idx) {
       var $row = $('<div>').addClass('visualization-message visualization-message-' + msg.role);
-      var label = msg.role === 'user' ? 'You' : 'AI';
-      $row.append($('<div>').addClass('visualization-message-label').text(label));
+      $row.append($('<div>').addClass('visualization-message-label').text(msg.role === 'user' ? 'You' : 'AI'));
       var $bubble = $('<div>').addClass('visualization-message-bubble');
-
       if (msg.role === 'assistant') {
-        // Show a trimmed preview of the HTML; full doc lives in srcdoc.
         var trimmed = (msg.content || '').slice(0, 600);
         $bubble.append($('<pre>').text(trimmed + ((msg.content || '').length > 600 ? '…' : '')));
-        var $apply = $('<button>')
-          .attr('type', 'button')
-          .addClass('visualization-apply')
-          .text('Apply')
-          .on('click', function () { applyMessage(idx); });
-        $bubble.append($apply);
+        $bubble.append(
+          $('<button>').attr('type', 'button').addClass('visualization-apply').text('Apply')
+            .on('click', function () { applyMessage(idx); })
+        );
       } else {
         $bubble.text(msg.content);
       }
@@ -74,29 +79,19 @@ function VisualizationStudio(runtime, element) {
   }
 
   function loadHistory() {
-    $.ajax({
-      url: urls.history,
-      type: 'POST',
-      contentType: 'application/json',
-      data: JSON.stringify({}),
-      success: function (resp) {
-        if (resp.status !== 'ok') {
-          showError(resp.message || 'Failed to load chat history.');
-          return;
-        }
-        messages = resp.messages || [];
+    crafterAjax('GET', CRAFTER.chat(blockId))
+      .done(function (resp) {
+        messages = (resp && resp.messages) || [];
         renderMessages();
-      },
-      error: function () {
-        showError('Network error while loading chat history.');
-      }
-    });
+      })
+      .fail(function (xhr) {
+        showError('Failed to load chat history: ' + (xhr.responseText || xhr.statusText));
+      });
   }
 
   function sendMessage() {
     var text = ($prompt.val() || '').trim();
     if (!text) return;
-
     messages.push({role: 'user', content: text});
     renderMessages();
     $prompt.val('');
@@ -104,28 +99,28 @@ function VisualizationStudio(runtime, element) {
     showError(null);
     $sendBtn.prop('disabled', true);
 
-    $.ajax({
-      url: urls.sendMessage,
-      type: 'POST',
-      contentType: 'application/json',
-      data: JSON.stringify({prompt: text}),
-      success: function (resp) {
+    crafterAjax('POST', CRAFTER.generate, {
+      course_id: courseId,
+      sequential_id: sequentialId,
+      block_id: blockId,
+      xblock_type: 'visualization',
+      prompt: text,
+      content: '' // current cached_html not required for generation; keep the request small
+    })
+      .done(function (resp) {
         $sendBtn.prop('disabled', false);
-        if (resp.status !== 'ok') {
-          setStatus('error');
-          showError(resp.message || 'Generation failed.');
-          return;
-        }
         setStatus('idle');
-        messages.push({role: 'assistant', content: resp.html});
+        messages.push({role: 'assistant', content: resp.content});
         renderMessages();
-      },
-      error: function () {
+      })
+      .fail(function (xhr) {
         $sendBtn.prop('disabled', false);
         setStatus('error');
-        showError('Network error while sending message.');
-      }
-    });
+        var detail = '';
+        try { detail = JSON.parse(xhr.responseText).error || xhr.responseText; }
+        catch (e) { detail = xhr.responseText || xhr.statusText; }
+        showError('Generation failed: ' + detail);
+      });
   }
 
   function applyMessage(idx) {
@@ -136,80 +131,48 @@ function VisualizationStudio(runtime, element) {
       if (messages[i].role === 'user') { prevUser = messages[i].content; break; }
     }
     $.ajax({
-      url: urls.applyMessage,
+      url: xblockUrls.saveApplied,
       type: 'POST',
       contentType: 'application/json',
-      data: JSON.stringify({html: msg.content, prompt: prevUser || ''}),
-      success: function (resp) {
-        if (resp.status !== 'ok') {
-          showError(resp.message || 'Apply failed.');
-          return;
-        }
+      data: JSON.stringify({html: msg.content, prompt: prevUser || ''})
+    })
+      .done(function (resp) {
+        if (resp.status !== 'ok') { showError(resp.message || 'Apply failed.'); return; }
         $preview.attr('srcdoc', msg.content);
         $previewWrap.show();
         $previewAt.text(resp.generated_at || '');
         showError(null);
-      },
-      error: function () {
-        showError('Network error while applying.');
-      }
-    });
+      })
+      .fail(function () { showError('Network error while applying.'); });
   }
 
   function clearHistory() {
-    $.ajax({
-      url: urls.clear,
-      type: 'POST',
-      contentType: 'application/json',
-      data: JSON.stringify({}),
-      success: function (resp) {
-        if (resp.status !== 'ok') {
-          showError(resp.message || 'Clear failed.');
-          return;
-        }
-        messages = [];
-        renderMessages();
-      },
-      error: function () {
-        showError('Network error while clearing.');
-      }
-    });
+    crafterAjax('DELETE', CRAFTER.chat(blockId))
+      .done(function () { messages = []; renderMessages(); })
+      .fail(function (xhr) { showError('Clear failed: ' + (xhr.responseText || xhr.statusText)); });
   }
 
   function saveSettings() {
     var displayName = $root.find('#visualization-display-name').val();
     $.ajax({
-      url: urls.saveSettings,
+      url: xblockUrls.saveSettings,
       type: 'POST',
       contentType: 'application/json',
-      data: JSON.stringify({display_name: displayName}),
-      success: function (resp) {
-        if (resp.status !== 'ok') {
-          showError(resp.message || 'Save failed.');
-        } else {
-          showError(null);
-        }
-      },
-      error: function () {
-        showError('Network error while saving.');
-      }
-    });
+      data: JSON.stringify({display_name: displayName})
+    })
+      .done(function (resp) {
+        if (resp.status !== 'ok') showError(resp.message || 'Save failed.');
+        else showError(null);
+      })
+      .fail(function () { showError('Network error while saving.'); });
   }
 
-  // Wire up listeners
-  $sendBtn.closest('form').on('submit', function (e) {
-    e.preventDefault();
-    sendMessage();
-  });
+  $sendBtn.closest('form').on('submit', function (e) { e.preventDefault(); sendMessage(); });
   $prompt.on('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
   $clearBtn.on('click', clearHistory);
   $saveBtn.on('click', saveSettings);
 
-  // Initial load
   loadHistory();
 }

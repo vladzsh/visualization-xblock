@@ -1,26 +1,17 @@
-"""Tests for VisualizationXBlock (crafter-backed)."""
+"""Tests for VisualizationXBlock."""
 
 import json
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from web_fragments.fragment import Fragment
 from xblock.fields import ScopeIds
 from xblock.test.toy_runtime import ToyRuntime
 
 from visualization import VisualizationXBlock
-from visualization.crafter_client import (
-    CrafterError,
-    CrafterNotConfiguredError,
-    CrafterNotInstalledError,
-)
 
 
 SIMULATION_HTML = "<!DOCTYPE html><html><body><h1>sim</h1></body></html>"
-
-
-FAKE_COURSE_ID = "course-v1:edx+1+1"
-FAKE_BLOCK_ID = "block-v1:edx+1+1+type@visualization+block@abc"
 
 
 class VisualizationTestBase(unittest.TestCase):
@@ -32,14 +23,13 @@ class VisualizationTestBase(unittest.TestCase):
             def_id="def_id",
             usage_id="usage_id",
         )
-        self.mock_user = MagicMock(name="django_user")
 
     def _make_block(self):
         block = VisualizationXBlock(self.runtime, scope_ids=self.scope_ids)
-        # ToyRuntime doesn't supply real usage keys / user services; stub ours.
-        block._current_user = lambda: self.mock_user
-        block._course_id = lambda: FAKE_COURSE_ID
-        block._block_id = lambda: FAKE_BLOCK_ID
+        # ToyRuntime has no real opaque keys — stub the helpers.
+        block._course_id = lambda: "course-v1:edx+1+1"
+        block._block_id = lambda: "block-v1:edx+1+1+type@visualization+block@abc"
+        block._sequential_id = lambda: "block-v1:edx+1+1+type@sequential+block@seq"
         return block
 
     def _call_handler(self, block, handler_name, data):
@@ -51,68 +41,17 @@ class VisualizationTestBase(unittest.TestCase):
 
 
 class TestSaveSettings(VisualizationTestBase):
-    def test_save_settings_updates_display_name(self):
+    def test_updates_display_name(self):
         block = self._make_block()
         resp = self._call_handler(block, "save_settings", {"display_name": "Orbits"})
         self.assertEqual(resp["status"], "ok")
         self.assertEqual(block.display_name, "Orbits")
 
 
-class TestSendMessage(VisualizationTestBase):
-    @patch("visualization.xblock.crafter_client.generate_visualization_html")
-    def test_send_message_happy_path(self, mock_gen):
-        mock_gen.return_value = SIMULATION_HTML
+class TestSaveAppliedHtml(VisualizationTestBase):
+    def test_persists_html_and_timestamp(self):
         block = self._make_block()
-        resp = self._call_handler(block, "send_message", {"prompt": "Orbit sim"})
-        self.assertEqual(resp["status"], "ok")
-        self.assertEqual(resp["html"], SIMULATION_HTML)
-        self.assertEqual(block.generation_status, "idle")
-        # send_message does NOT auto-apply
-        self.assertEqual(block.cached_html, "")
-        mock_gen.assert_called_once_with(
-            course_id=FAKE_COURSE_ID,
-            block_id=FAKE_BLOCK_ID,
-            prompt="Orbit sim",
-            user=self.mock_user,
-            current_content="",
-        )
-
-    def test_send_message_rejects_empty_prompt(self):
-        block = self._make_block()
-        resp = self._call_handler(block, "send_message", {"prompt": "   "})
-        self.assertEqual(resp["status"], "error")
-
-    @patch("visualization.xblock.crafter_client.generate_visualization_html")
-    def test_send_message_reports_not_configured(self, mock_gen):
-        mock_gen.side_effect = CrafterNotConfiguredError("no creator for course")
-        block = self._make_block()
-        resp = self._call_handler(block, "send_message", {"prompt": "x"})
-        self.assertEqual(resp["status"], "error")
-        self.assertEqual(resp["code"], "crafter_not_configured")
-        self.assertEqual(block.generation_status, "error")
-        self.assertIn("no creator", block.last_error)
-
-    @patch("visualization.xblock.crafter_client.generate_visualization_html")
-    def test_send_message_reports_not_installed(self, mock_gen):
-        mock_gen.side_effect = CrafterNotInstalledError("crafter missing")
-        block = self._make_block()
-        resp = self._call_handler(block, "send_message", {"prompt": "x"})
-        self.assertEqual(resp["code"], "crafter_not_installed")
-
-    @patch("visualization.xblock.crafter_client.generate_visualization_html")
-    def test_send_message_reports_generic_error(self, mock_gen):
-        mock_gen.side_effect = ValueError("API timeout")
-        block = self._make_block()
-        resp = self._call_handler(block, "send_message", {"prompt": "x"})
-        self.assertEqual(resp["status"], "error")
-        self.assertEqual(resp["message"], "API timeout")
-        self.assertEqual(block.generation_status, "error")
-
-
-class TestApplyMessage(VisualizationTestBase):
-    def test_apply_message_updates_cached_html(self):
-        block = self._make_block()
-        resp = self._call_handler(block, "apply_message", {
+        resp = self._call_handler(block, "save_applied_html", {
             "html": SIMULATION_HTML,
             "prompt": "Orbit sim",
         })
@@ -120,43 +59,23 @@ class TestApplyMessage(VisualizationTestBase):
         self.assertEqual(block.cached_html, SIMULATION_HTML)
         self.assertEqual(block.prompt, "Orbit sim")
         self.assertIsNotNone(block.generated_at)
+        self.assertIn("generated_at", resp)
 
-    def test_apply_message_rejects_empty_payload(self):
+    def test_rejects_empty_payload(self):
         block = self._make_block()
-        resp = self._call_handler(block, "apply_message", {"html": ""})
+        resp = self._call_handler(block, "save_applied_html", {"html": ""})
         self.assertEqual(resp["status"], "error")
 
 
-class TestChatHistory(VisualizationTestBase):
-    @patch("visualization.xblock.crafter_client.get_chat_messages")
-    def test_get_chat_history_returns_messages(self, mock_get):
-        mock_get.return_value = [
-            {"role": "user", "content": "hi", "created_at": "2026-01-01T00:00:00+00:00"},
-        ]
-        block = self._make_block()
-        resp = self._call_handler(block, "get_chat_history", {})
-        self.assertEqual(resp["status"], "ok")
-        self.assertEqual(len(resp["messages"]), 1)
-        mock_get.assert_called_once_with(FAKE_BLOCK_ID, self.mock_user)
-
-    @patch("visualization.xblock.crafter_client.clear_chat")
-    def test_clear_chat_history(self, mock_clear):
-        mock_clear.return_value = 3
-        block = self._make_block()
-        resp = self._call_handler(block, "clear_chat_history", {})
-        self.assertEqual(resp["status"], "ok")
-        self.assertEqual(resp["deleted"], 3)
-
-
 class TestViews(VisualizationTestBase):
-    def test_student_view_without_html_shows_placeholder(self):
+    def test_student_view_placeholder_when_empty(self):
         block = self._make_block()
         frag = block.student_view()
         self.assertIsInstance(frag, Fragment)
         self.assertIn("not been generated", frag.content)
         self.assertNotIn("<iframe", frag.content)
 
-    def test_student_view_renders_iframe_with_srcdoc(self):
+    def test_student_view_renders_sandboxed_iframe(self):
         block = self._make_block()
         block.cached_html = SIMULATION_HTML
         frag = block.student_view()
@@ -164,13 +83,15 @@ class TestViews(VisualizationTestBase):
         self.assertIn("srcdoc=", frag.content)
         self.assertNotIn(SIMULATION_HTML, frag.content)  # escaped
 
-    def test_studio_view_has_chat_scaffolding(self):
+    def test_studio_view_carries_data_attrs_and_chat_scaffold(self):
         block = self._make_block()
         frag = block.studio_view()
         self.assertIn("AI Content Assistant", frag.content)
         self.assertIn("visualization-messages", frag.content)
         self.assertIn("visualization-clear-history", frag.content)
         self.assertIn("visualization-send", frag.content)
+        self.assertIn('data-course-id="course-v1:edx+1+1"', frag.content)
+        self.assertIn("data-sequential-id=\"block-v1:edx+1+1+type@sequential+block@seq\"", frag.content)
 
 
 if __name__ == "__main__":

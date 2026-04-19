@@ -1,7 +1,9 @@
 <div class="visualization-studio"
-     data-initial-status="{status}"
-     data-initial-generated-at="{generated_at}"
-     data-applied-prompt="{applied_prompt}">
+     data-course-id="{course_id}"
+     data-block-id="{block_id}"
+     data-sequential-id="{sequential_id}"
+     data-applied-prompt="{applied_prompt}"
+     data-generated-at="{generated_at}">
   <div class="visualization-field">
     <label for="visualization-display-name">Display name</label>
     <input id="visualization-display-name" type="text" value="{display_name}" />
@@ -27,8 +29,8 @@
     <p class="visualization-hint">Press Enter to send, Shift+Enter for a new line.</p>
   </section>
 
-  <div class="visualization-error" role="alert" style="display:{error_display}">
-    <strong>Last error:</strong> <span class="visualization-error-msg">{last_error}</span>
+  <div class="visualization-error" role="alert" style="display:none">
+    <strong>Last error:</strong> <span class="visualization-error-msg"></span>
   </div>
 
   <div class="visualization-preview-wrap" style="display:{preview_display}">
@@ -45,6 +47,6 @@
 
   <div class="visualization-actions">
     <button type="button" class="visualization-save">Save settings</button>
-    <span class="visualization-status" data-status="{status}">Status: {status}</span>
+    <span class="visualization-status" data-status="idle">Status: idle</span>
   </div>
 </div>

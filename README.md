@@ -21,10 +21,14 @@ Proof of concept. Expect rough edges.
   message to the active simulation, and a live preview pane.
 - **LMS (student view):** renders the applied simulation inside
   `<iframe sandbox="allow-scripts">`. One shared simulation per block.
-- **Backend:** delegates generation to `course-crafter-plugin` — chat history,
-  credentials, prompt engineering, and HTML parsing all live there. This
-  xblock contributes the `visualization` content type and the Gemini provider
-  upstream (see companion MR on the crafter repo).
+- **Backend:** the Studio browser POSTs directly to `course-crafter-plugin`'s
+  REST API (`/course_crafter_plugin/api/ai-content/generate/` and
+  `/course_crafter_plugin/api/chat/{block_id}/`). Same origin as the xblock
+  iframe so the session cookie authenticates the request. This xblock only
+  persists the author-applied HTML via its own `save_applied_html` handler
+  and renders it in the student view.
+- **Upstream:** we contribute the `visualization` content type and the Gemini
+  provider to `course-crafter-plugin` (see companion MR on the crafter repo).
 
 ## Supported models
 
@@ -85,9 +89,8 @@ visualization-xblock/
     ├── setup.py                   # dist name: visualization-xblock
     ├── conftest.py
     ├── visualization/             # Python package (xblock tag: visualization)
-    │   ├── xblock.py              # VisualizationXBlock
-    │   ├── crafter_client.py      # Bridge to course-crafter-plugin
-    │   └── static/{html,css,js}/
+    │   ├── xblock.py              # VisualizationXBlock (save_settings + save_applied_html)
+    │   └── static/{html,css,js}/  # Studio chat UI POSTs directly to crafter REST
     └── tests/
 ```
 

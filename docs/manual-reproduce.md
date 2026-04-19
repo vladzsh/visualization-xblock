@@ -158,20 +158,22 @@ a *minimally-modified* version of the previous HTML, not a rewrite.
 
 ## 12. Error-path checks
 
+The xblock's Studio JS calls crafter's REST API directly, so errors come
+straight from crafter's view (DRF 400s) — shown in the red "Last error" bar
+above the Save button.
+
 **a. No AIContentCreator for course.** Temporarily delete the
-`AIContentCreator` row in Django admin, then Send a message. Expected:
-status `error`, message reads
-`No AIContentCreator is assigned to course '…'. Open Django admin …`.
+`AIContentCreator` row in Django admin, then Send. Expected:
+`Generation failed: Missing AI Content creation Assistant for this course.`.
 
 **b. Invalid API key.** Edit `APICredentials.api_key` to `"invalid"`, Send.
-Expected: status `error`, message starts with `Gemini API returned 400:`
-(plus Google's key-invalid payload).
+Expected message contains `AI Content creation failed:` plus Google's
+key-invalid payload.
 
-**c. Quota exhausted (free tier pro models).** Set `Assistant.model_name` to
-`gemini-2.5-pro` and Send. Expected: status `error`, message contains `429`
-and `Quota exceeded for metric …`. This is the exact path we hit in the
-earlier curl POC; it confirms the dispatcher is actually routing through
-Gemini.
+**c. Quota exhausted (pro models on free tier).** Set `Assistant.model_name`
+to `gemini-2.5-pro` and Send. Expected: error contains `429` and
+`Quota exceeded for metric …` — the exact path we hit in the earlier curl
+POC, now proving the provider dispatcher routes through `clients/gemini.py`.
 
 ## 13. Restore
 
@@ -181,9 +183,10 @@ course.
 ## Done
 
 If every step above passes, the integration works end-to-end:
-- xblock handler routes through `crafter_client`
-- crafter's prompt service + new `_build_visualization_prompt`
+- xblock Studio JS POSTs to `/course_crafter_plugin/api/ai-content/generate/`
+- crafter's prompt service picks the new `_build_visualization_prompt`
 - crafter's client dispatcher routes to `clients/gemini.py`
 - content_service's non-sanitizing parser returns raw HTML
-- xblock stores `cached_html` and renders in a sandboxed iframe
+- xblock's `save_applied_html` handler persists the author-chosen result
+- student view renders it in a sandboxed iframe
 - chat history survives across sessions via `course_crafter_chat.Conversation`
