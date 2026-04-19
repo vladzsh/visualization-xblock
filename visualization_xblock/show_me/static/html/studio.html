@@ -1,0 +1,40 @@
+<div class="show-me-studio">
+  <h3>Show Me — Interactive Simulation</h3>
+
+  <div class="show-me-field">
+    <label for="show-me-display-name">Display name</label>
+    <input id="show-me-display-name" type="text" value="{display_name}" />
+  </div>
+
+  <div class="show-me-field">
+    <label for="show-me-prompt">Simulation prompt</label>
+    <textarea id="show-me-prompt" rows="8" placeholder="Create an interactive simulation of ...">{prompt}</textarea>
+  </div>
+
+  <div class="show-me-field">
+    <label for="show-me-model">Gemini model</label>
+    <select id="show-me-model">
+      {model_options}
+    </select>
+    <p class="show-me-hint">gemini-2.5-flash — free tier. gemini-2.5-pro — requires billing. gemini-3.1-pro — WebGL/3D.</p>
+  </div>
+
+  <div class="show-me-actions">
+    <button type="button" class="show-me-save">Save</button>
+    <button type="button" class="show-me-generate">Generate simulation</button>
+    <span class="show-me-status" data-status="{status}">Status: {status}</span>
+  </div>
+
+  <div class="show-me-error" style="display:{error_display}">
+    <strong>Last error:</strong> <span class="show-me-error-msg">{last_error}</span>
+  </div>
+
+  <div class="show-me-preview-wrap" style="display:{preview_display}">
+    <h4>Preview <small class="show-me-generated-at">{generated_at}</small></h4>
+    <iframe class="show-me-preview"
+            sandbox="allow-scripts"
+            srcdoc="{preview_srcdoc}"
+            style="width:100%;height:600px;border:1px solid #ccc"
+            title="Simulation preview"></iframe>
+  </div>
+</div>
